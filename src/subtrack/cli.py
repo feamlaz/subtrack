@@ -1,6 +1,7 @@
 """CLI interface — click-based command line."""
 
 import os
+import random
 from datetime import date
 from pathlib import Path
 from typing import Optional
@@ -8,6 +9,7 @@ from typing import Optional
 import click
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
 
 from .db import BILLING_CYCLES, CATEGORIES, CURRENCIES, Database, Subscription
 from .services import (
@@ -17,6 +19,8 @@ from .services import (
     subscriptions_to_csv,
     subscriptions_to_json,
 )
+from .banner import get_banner, BANNERS
+from .utils import make_stats_panel, make_welcome_text
 
 console = Console()
 
@@ -25,13 +29,28 @@ def _db(ctx):
     return ctx.obj["db"]
 
 
-@click.group()
+def _print_banner(style="default"):
+    """Print colorful ASCII banner."""
+    banner, color = get_banner(style)
+    console.print(banner, style=color, highlight=False)
+
+
+@click.group(invoke_without_command=True)
 @click.option("--db-path", envvar="SUBTRACK_DB", type=click.Path(), default=None, help="Path to database file")
+@click.option("--banner", "-B", type=click.Choice(list(BANNERS.keys())), default=None, help="Banner style")
 @click.pass_context
-def cli(ctx, db_path):
+def cli(ctx, db_path, banner):
     """SubTrack — track all your subscriptions in the terminal."""
     ctx.ensure_object(dict)
     ctx.obj["db"] = Database(db_path)
+    ctx.obj["banner"] = banner
+
+    if ctx.invoked_subcommand is None:
+        # No subcommand — show welcome + stats
+        _print_banner(banner or "default")
+        console.print(make_welcome_text())
+        subs = ctx.obj["db"].list_all(active_only=True)
+        console.print(make_stats_panel(subs))
 
 
 @cli.command()
@@ -56,9 +75,18 @@ def add(ctx, name, price, currency, billing, category, next_renewal, notes):
     )
     created = _db(ctx).add(sub)
     icon = CATEGORY_ICONS.get(category, "📦")
-    console.print("\n  {} [bold green]Added:[/] {} — {}{}\n".format(
-        icon, name, format_price(price, currency), BILLING_LABELS[billing]
-    ))
+
+    # Colorful add confirmation
+    t = Text()
+    t.append("  ")
+    t.append(icon)
+    t.append(" ")
+    t.append("Added: ", style="bold green")
+    t.append(name, style="bold")
+    t.append(" — ")
+    t.append(format_price(price, currency), style="bold #7c6cf0")
+    t.append(BILLING_LABELS[billing], style="dim")
+    console.print(t)
 
 
 @cli.command("list")
@@ -76,7 +104,13 @@ def list_subs(ctx, show_all, category):
         console.print("\n  [dim]No subscriptions yet. Use [bold]subtrack add[/] to add one.[/]\n")
         return
 
-    table = Table(title="Subscriptions", show_lines=True, border_style="dim")
+    banner_style = ctx.obj.get("banner") or "minimal"
+    _print_banner(banner_style)
+
+    # Colorful gradient table
+    gradient = ["#7c6cf0", "#6d72f3", "#5e78f6", "#4f7ef9", "#4084fc", "#318aff", "#2290ff"]
+
+    table = Table(title="Subscriptions", show_lines=True, border_style="#7c6cf0")
     table.add_column("ID", style="dim", width=4)
     table.add_column("Name", style="bold")
     table.add_column("Price")
@@ -86,16 +120,17 @@ def list_subs(ctx, show_all, category):
     table.add_column("Renewal")
     table.add_column("Status")
 
-    for s in subs:
+    for i, s in enumerate(subs):
         icon = CATEGORY_ICONS.get(s.category, "📦")
+        color = gradient[i % len(gradient)]
         status = "[green]active[/]" if s.active else "[dim]inactive[/]"
         renewal = s.next_renewal.isoformat() if s.next_renewal else "—"
         table.add_row(
             str(s.id),
             "{} {}".format(icon, s.name),
             "{}{}".format(format_price(s.price, s.currency), BILLING_LABELS[s.billing]),
-            format_price(s.monthly_cost, s.currency),
-            s.category,
+            "[{}]{}[/]".format(color, format_price(s.monthly_cost, s.currency)),
+            "[{}]{}[/]".format(color, s.category),
             s.billing,
             renewal,
             status,
@@ -103,15 +138,18 @@ def list_subs(ctx, show_all, category):
 
     console.print(table)
 
-    # Totals
+    # Colorful totals
     by_currency = {}
     for s in subs:
         if s.active:
             by_currency[s.currency] = by_currency.get(s.currency, 0) + s.monthly_cost
 
-    console.print("\n  [bold]Monthly total:[/]", end=" ")
-    parts = [format_price(m, c) for c, m in sorted(by_currency.items())]
-    console.print("  ".join(parts))
+    t = Text("\n  Monthly total: ")
+    for i, (cur, amt) in enumerate(sorted(by_currency.items())):
+        if i > 0:
+            t.append("  ")
+        t.append(format_price(amt, cur), style="bold {}".format(gradient[i % len(gradient)]))
+    console.print(t)
 
 
 @cli.command()
@@ -125,7 +163,11 @@ def remove(ctx, sub_id):
         console.print("\n  [red]Subscription #{} not found.[/]\n".format(sub_id))
         return
     if db.remove(sub_id):
-        console.print("\n  [red]Removed:[/] {}\n".format(sub.name))
+        t = Text()
+        t.append("  ")
+        t.append("Removed: ", style="bold red")
+        t.append(sub.name, style="bold")
+        console.print(t)
 
 
 @cli.command()
@@ -169,7 +211,11 @@ def edit(ctx, sub_id, name, price, currency, billing, category, next_renewal, no
 
     result = db.update(sub_id, **updates)
     if result:
-        console.print("\n  [green]Updated:[/] {}\n".format(result.name))
+        t = Text()
+        t.append("  ")
+        t.append("Updated: ", style="bold green")
+        t.append(result.name, style="bold")
+        console.print(t)
     else:
         console.print("\n  [red]Subscription #{} not found.[/]\n".format(sub_id))
 
@@ -186,7 +232,11 @@ def summary(ctx, show_all):
         console.print("\n  [dim]No subscriptions yet.[/]\n")
         return
 
-    table = Table(title="Cost Summary", show_lines=True, border_style="dim")
+    _print_banner(ctx.obj.get("banner") or "minimal")
+
+    gradient = ["#7c6cf0", "#6d72f3", "#5e78f6", "#4f7ef9", "#4084fc", "#318aff", "#2290ff"]
+
+    table = Table(title="Cost Summary", show_lines=True, border_style="#7c6cf0")
     table.add_column("Category", style="bold")
     table.add_column("Count", justify="right")
     table.add_column("Monthly", justify="right")
@@ -195,8 +245,9 @@ def summary(ctx, show_all):
     grand_monthly = {}
     grand_yearly = {}
 
-    for cat, info in data.items():
+    for i, (cat, info) in enumerate(data.items()):
         icon = CATEGORY_ICONS.get(cat, "📦")
+        color = gradient[i % len(gradient)]
         monthly_str = "  ".join(format_price(v, c) for c, v in info["monthly"].items())
         yearly_str = "  ".join(format_price(v, c) for c, v in info["yearly"].items())
 
@@ -205,7 +256,12 @@ def summary(ctx, show_all):
         for c, v in info["yearly"].items():
             grand_yearly[c] = grand_yearly.get(c, 0) + v
 
-        table.add_row("{} {}".format(icon, cat), str(info["count"]), monthly_str, yearly_str)
+        table.add_row(
+            "[{}]{} {}[/]".format(color, icon, cat),
+            str(info["count"]),
+            "[{}]{}[/]".format(color, monthly_str),
+            "[{}]{}[/]".format(color, yearly_str),
+        )
 
     table.add_section()
     gm = "  ".join(format_price(v, c) for c, v in sorted(grand_monthly.items()))
@@ -220,9 +276,32 @@ def summary(ctx, show_all):
         console.print("\n  [bold yellow]Upcoming renewals (7 days):[/]")
         for s in upcoming:
             days_left = (s.next_renewal - date.today()).days if s.next_renewal else 0
-            console.print("    • {} — {} ({}d) — {}".format(
+            console.print("    [yellow]•[/] {} — {} ({}d) — {}".format(
                 s.name, s.next_renewal, days_left, format_price(s.price, s.currency)
             ))
+
+
+@cli.command()
+@click.pass_context
+def stats(ctx):
+    """Show colorful stats dashboard."""
+    _print_banner(ctx.obj.get("banner") or "default")
+    console.print(make_welcome_text())
+    subs = _db(ctx).list_all(active_only=True)
+    console.print(make_stats_panel(subs))
+
+
+@cli.command()
+@click.option("--style", "-s", type=click.Choice(list(BANNERS.keys())), default=None, help="Banner style to preview")
+@click.pass_context
+def banner(ctx, style):
+    """Preview available ASCII banners."""
+    if style:
+        _print_banner(style)
+    else:
+        for name in BANNERS:
+            console.print("\n  [bold #7c6cf0]--- {} ---[/]\n".format(name))
+            _print_banner(name)
 
 
 @cli.command()

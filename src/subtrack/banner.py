@@ -1,0 +1,45 @@
+"""ASCII art banner for SubTrack."""
+
+BANNERS = {
+    "default": r"""
+  ____       _           _              ____       _
+ / ___| __ _| |__   __ _| |_ _   _ ___/ ___|  ___| |_
+| |    / _` | '_ \ / _` | __| | | / __\___ \ / __| __|
+| |___| (_| | |_) | (_| | |_| |_| \__ \___) | (__| |_
+ \____|\__,_|_.__/ \__,_|\__|\__,_|___/____/ \___|\__|
+""",
+    "minimal": r"""
+  S U B T R A C K
+  ━━━━━━━━━━━━━━━
+  Subscription Tracker
+""",
+    "box": r"""
+  ┌──────────────────────────────┐
+  │   ███╗   ██╗███████╗████████╗ │
+  │   ████╗  ██║██╔════╝╚══██╔══╝ │
+  │   ██╔██╗ ██║█████╗     ██║    │
+  │   ██║╚██╗██║██╔══╝     ██║    │
+  │   ██║ ╚████║███████╗   ██║    │
+  │   ╚═╝  ╚═══╝╚══════╝   ╚═╝    │
+  │        T R A C K E R          │
+  └──────────────────────────────┘
+""",
+    "wave": r"""
+  ╭─────────────────────────────────────╮
+  │  ░▒▓ S U B T R A C K ▓▒░           │
+  │  ~ track your subscriptions ~       │
+  ╰─────────────────────────────────────╯
+""",
+}
+
+BANNER_COLORS = {
+    "default": "bold #7c6cf0",
+    "minimal": "bold #e0e0e0",
+    "box": "#7c6cf0",
+    "wave": "#22c55e",
+}
+
+
+def get_banner(style="default"):
+    """Return ASCII banner and its Rich color style."""
+    return BANNERS.get(style, BANNERS["default"]), BANNER_COLORS.get(style, BANNER_COLORS["default"])
